@@ -15,6 +15,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Detect app directory
+        shell: bash
+        run: |
+          if [ -f "pubspec.yaml" ]; then
+            echo "APP_DIR=." >> $GITHUB_ENV
+          elif [ -f "travel_map_app/pubspec.yaml" ]; then
+            echo "APP_DIR=travel_map_app" >> $GITHUB_ENV
+          else
+            echo "Could not find pubspec.yaml in repository root or travel_map_app/" >&2
+            exit 1
+          fi
+
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
@@ -27,16 +39,31 @@ jobs:
           channel: stable
 
       - name: Flutter pub get
+        working-directory: ${{ env.APP_DIR }}
         run: flutter pub get
 
-      - name: Generate platform folders
-        run: flutter create .
+      - name: Ensure Android folder exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "${APP_DIR}/android/app/build.gradle" ]; then
+            echo "Android folder already present."
+            exit 0
+          fi
+
+          echo "Generating android/ templates in a temp project..."
+          rm -rf tmp_flutter_android
+          flutter create tmp_flutter_android --platforms android --org com.example --project-name tmp_flutter_android --no-pub
+
+          rm -rf "${APP_DIR}/android"
+          cp -R tmp_flutter_android/android "${APP_DIR}/android"
 
       - name: Build release APK
+        working-directory: ${{ env.APP_DIR }}
         run: flutter build apk --release --dart-define=AMAP_API_KEY=${{ secrets.AMAP_API_KEY }}
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: ${{ env.APP_DIR }}/build/app/outputs/flutter-apk/app-release.apk
