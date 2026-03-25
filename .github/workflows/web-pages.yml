@@ -1,0 +1,84 @@
+name: Build & Deploy Web
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect app directory
+        shell: bash
+        run: |
+          if [ -f "pubspec.yaml" ]; then
+            echo "APP_DIR=." >> $GITHUB_ENV
+          elif [ -f "travel_map_app/pubspec.yaml" ]; then
+            echo "APP_DIR=travel_map_app" >> $GITHUB_ENV
+          else
+            echo "Could not find pubspec.yaml in repository root or travel_map_app/" >&2
+            exit 1
+          fi
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Cache pub dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            ${{ env.APP_DIR }}/.dart_tool
+          key: ${{ runner.os }}-pub-web-${{ hashFiles(format('{0}/pubspec.yaml', env.APP_DIR)) }}
+          restore-keys: |
+            ${{ runner.os }}-pub-web-
+
+      - name: Ensure web folder exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "${APP_DIR}/web/index.html" ]; then
+            echo "web/ already exists."
+            exit 0
+          fi
+
+          echo "Generating web/ templates in a temp project..."
+          rm -rf tmp_flutter_web
+          flutter create tmp_flutter_web --platforms web --org com.example --project-name tmp_flutter_web --no-pub
+
+          rm -rf "${APP_DIR}/web"
+          cp -R tmp_flutter_web/web "${APP_DIR}/web"
+
+      - name: Flutter pub get
+        working-directory: ${{ env.APP_DIR }}
+        run: flutter pub get
+
+      - name: Build web
+        working-directory: ${{ env.APP_DIR }}
+        run: flutter build web --release
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ env.APP_DIR }}/build/web
+
+      - name: Deploy
+        uses: actions/deploy-pages@v4
+

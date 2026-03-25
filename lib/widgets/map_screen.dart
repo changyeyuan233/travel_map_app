@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
@@ -67,6 +68,11 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<Position> _determinePosition() async {
+    // Web: permissions are handled by the browser (no permission_handler / Android settings).
+    if (kIsWeb) {
+      return Geolocator.getCurrentPosition();
+    }
+
     var serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       await Geolocator.openLocationSettings();
@@ -76,8 +82,7 @@ class _MapScreenState extends State<MapScreen> {
       }
     }
 
-    // Explicitly request runtime permission for Android.
-    // This also drives proper appearance in MIUI's app permission page.
+    // Android: request runtime permission so MIUI/Xiaomi permission page includes location.
     final status = await Permission.locationWhenInUse.request();
     if (!status.isGranted) {
       if (status.isPermanentlyDenied) {
