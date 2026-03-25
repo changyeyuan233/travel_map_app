@@ -30,6 +30,7 @@ class _MapScreenState extends State<MapScreen> {
   RoutePlanResult? _routeResult;
   bool _isSelecting = false;
   bool _isLoadingLocation = true;
+  String? _locationError;
 
   Poi? _activePoi;
   bool _showPlanPanel = false;
@@ -44,15 +45,24 @@ class _MapScreenState extends State<MapScreen> {
 
   Future<void> _initLocationAndPois() async {
     setState(() => _isLoadingLocation = true);
-    final position = await _determinePosition();
-    if (!mounted) return;
+    try {
+      final position = await _determinePosition();
+      if (!mounted) return;
 
-    final current = LatLng(position.latitude, position.longitude);
-    setState(() {
-      _currentLocation = current;
-      _pois = _poiService.getNearbyRecommendations(current);
-      _isLoadingLocation = false;
-    });
+      final current = LatLng(position.latitude, position.longitude);
+      setState(() {
+        _currentLocation = current;
+        _pois = _poiService.getNearbyRecommendations(current);
+        _isLoadingLocation = false;
+        _locationError = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingLocation = false;
+        _locationError = e.toString();
+      });
+    }
   }
 
   Future<Position> _determinePosition() async {
@@ -155,16 +165,36 @@ class _MapScreenState extends State<MapScreen> {
     if (current == null) {
       return Scaffold(
         body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('Unable to get location.'),
-              const SizedBox(height: 12),
-              FilledButton(
-                onPressed: _initLocationAndPois,
-                child: const Text('Retry'),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: GlassCard(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '无法获取定位',
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 18),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    _locationError ?? '未知错误',
+                    style: const TextStyle(color: Colors.white70, fontSize: 13),
+                    maxLines: 6,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 14),
+                  FilledButton(
+                    onPressed: () {
+                      setState(() => _locationError = null);
+                      _initLocationAndPois();
+                    },
+                    child: const Text('重试'),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       );
