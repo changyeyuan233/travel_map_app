@@ -81,10 +81,10 @@ jobs:
 
       - name: Build release APK
         working-directory: ${{ env.APP_DIR }}
-        run: flutter build apk --release --dart-define=AMAP_API_KEY=${{ secrets.AMAP_API_KEY }}
+        run: flutter build apk --debug --dart-define=AMAP_API_KEY=${{ secrets.AMAP_API_KEY }}
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-release-apk
-          path: ${{ env.APP_DIR }}/build/app/outputs/flutter-apk/app-release.apk
+          name: app-debug-apk
+          path: ${{ env.APP_DIR }}/build/app/outputs/flutter-apk/app-debug.apk
