@@ -74,10 +74,62 @@ jobs:
 
           echo "Generating android/ templates in a temp project..."
           rm -rf tmp_flutter_android
-          flutter create tmp_flutter_android --platforms android --org com.example --project-name tmp_flutter_android --no-pub
+          flutter create tmp_flutter_android --platforms android --org com.example --project-name travel_map_app --no-pub
 
           rm -rf "${APP_DIR}/android"
           cp -R tmp_flutter_android/android "${APP_DIR}/android"
+
+      - name: Patch AndroidManifest permissions (location + internet)
+        shell: bash
+        run: |
+          set -euo pipefail
+          MANIFEST_PATH="${APP_DIR}/android/app/src/main/AndroidManifest.xml"
+          STRINGS_PATH="${APP_DIR}/android/app/src/main/res/values/strings.xml"
+
+          if [ ! -f "$MANIFEST_PATH" ]; then
+            echo "Manifest not found: $MANIFEST_PATH" >&2
+            exit 1
+          fi
+
+          python - "$MANIFEST_PATH" <<'PY'
+          import re, pathlib, sys
+
+          manifest = pathlib.Path(sys.argv[1])
+          txt = manifest.read_text(encoding="utf-8")
+
+          perms = (
+              '    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n'
+              '    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n'
+              '    <uses-permission android:name="android.permission.INTERNET" />\n'
+          )
+
+          def has_perm(name: str) -> bool:
+              return name in txt
+
+          if 'ACCESS_FINE_LOCATION' not in txt:
+              txt = re.sub(r'(<application\\b)', perms + r'\\1', txt, count=1)
+          elif 'android.permission.INTERNET' not in txt:
+              # If fine location exists, but INTERNET doesn't, insert only INTERNET.
+              txt = re.sub(
+                  r'(<application\\b)',
+                  '    <uses-permission android:name="android.permission.INTERNET" />\n' + r'\\1',
+                  txt,
+                  count=1,
+              )
+
+          manifest.write_text(txt, encoding="utf-8")
+          PY
+
+          if [ -f "$STRINGS_PATH" ]; then
+            python - "$STRINGS_PATH" <<'PY'
+            import pathlib, re, sys
+            p = pathlib.Path(sys.argv[1])
+            txt = p.read_text(encoding="utf-8")
+            txt2 = re.sub(r'<string name="app_name">.*?</string>', '<string name="app_name">travel_map_app</string>', txt, flags=re.S)
+            if txt2 != txt:
+              p.write_text(txt2, encoding="utf-8")
+            PY
+          fi
 
       - name: Build release APK
         working-directory: ${{ env.APP_DIR }}
