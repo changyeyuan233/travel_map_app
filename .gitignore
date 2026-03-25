@@ -1,0 +1,25 @@
+# Flutter/Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub/
+build/
+coverage/
+
+# IDE
+.idea/
+.vscode/
+
+# Generated platform folders (kept out to keep repo minimal)
+android/
+ios/
+macos/
+windows/
+linux/
+web/
+
+# Signing files (if any)
+*.jks
+*.keystore
+
