@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../models/poi.dart';
 import '../services/map_tiles.dart';
@@ -75,12 +76,14 @@ class _MapScreenState extends State<MapScreen> {
       }
     }
 
-    var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
-      return Future.error('Location permissions are denied.');
+    // Explicitly request runtime permission for Android.
+    // This also drives proper appearance in MIUI's app permission page.
+    final status = await Permission.locationWhenInUse.request();
+    if (!status.isGranted) {
+      if (status.isPermanentlyDenied) {
+        return Future.error('Location permission permanently denied. Please enable it in system Settings.');
+      }
+      return Future.error('Location permission denied.');
     }
 
     return Geolocator.getCurrentPosition();
