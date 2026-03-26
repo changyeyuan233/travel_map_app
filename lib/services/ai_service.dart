@@ -20,6 +20,22 @@ class AiRoutePlanResult {
   final List<TravelMode> modes;
 }
 
+class AiPoiDetailResult {
+  const AiPoiDetailResult({
+    required this.title,
+    required this.heroImagePrompt,
+    required this.overview,
+    required this.highlights,
+    required this.tips,
+  });
+
+  final String title;
+  final String heroImagePrompt;
+  final String overview;
+  final List<String> highlights;
+  final List<String> tips;
+}
+
 class AiService {
   AiService()
       : _apiKey = const String.fromEnvironment('DOUBAO_API_KEY', defaultValue: ''),
@@ -270,6 +286,72 @@ class AiService {
       default:
         return null;
     }
+  }
+
+  Future<AiPoiDetailResult?> describePoiWithAI({
+    required Poi poi,
+    required TravelPreference preference,
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    if (!_enabled) return null;
+    final payload = {
+      'model': _model,
+      'messages': [
+        {
+          'role': 'system',
+          'content':
+              'You are a travel writer. Return ONLY valid JSON matching the schema. No markdown fences.'
+        },
+        {
+          'role': 'user',
+          'content': jsonEncode({
+            'task': 'write a rich travel introduction for a POI',
+            'preference': preference.name,
+            'poi': {
+              'id': poi.id,
+              'name': poi.name,
+              'category': poi.category.name,
+              'rating': poi.rating,
+              'description': poi.description,
+            },
+            'constraints': [
+              'Use concise but vivid Chinese.',
+              'Highlights: 4-6 items.',
+              'Tips: 3-5 actionable tips.'
+            ],
+            'return_schema': {
+              'title': 'string',
+              'heroImagePrompt': 'string',
+              'overview': 'string',
+              'highlights': ['string ...'],
+              'tips': ['string ...']
+            }
+          }),
+        }
+      ],
+      'temperature': 0.4,
+    };
+
+    final raw = await _postJson(payload: payload, timeout: timeout);
+    final json = _extractJson(raw);
+    if (json == null) return null;
+
+    final title = json['title']?.toString() ?? poi.name;
+    final prompt = json['heroImagePrompt']?.toString() ?? '';
+    final overview = json['overview']?.toString() ?? poi.description;
+    final highlights = (json['highlights'] as List?)
+            ?.whereType<String>()
+            .toList() ??
+        const <String>[];
+    final tips = (json['tips'] as List?)?.whereType<String>().toList() ?? const <String>[];
+
+    return AiPoiDetailResult(
+      title: title,
+      heroImagePrompt: prompt,
+      overview: overview,
+      highlights: highlights,
+      tips: tips,
+    );
   }
 }
 

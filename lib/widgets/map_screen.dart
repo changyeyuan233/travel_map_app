@@ -12,6 +12,7 @@ import '../services/map_tiles.dart';
 import '../services/poi_service.dart';
 import '../services/route_planner_service.dart';
 import '../services/ai_service.dart';
+import '../services/amap_routing_service.dart';
 import 'glass.dart';
 
 class MapScreen extends StatefulWidget {
@@ -27,6 +28,7 @@ class _MapScreenState extends State<MapScreen> {
   final _routePlanner = RoutePlannerService();
   Timer? _poiRefreshDebounce;
   final _aiService = AiService();
+  final _amapRouting = AmapRoutingService();
 
   LatLng? _currentLocation;
   List<Poi> _pois = const [];
@@ -45,6 +47,14 @@ class _MapScreenState extends State<MapScreen> {
   bool _isAiReranking = false;
   int _aiRerankToken = 0;
   bool _isAiPlanning = false;
+
+  List<List<LatLng>> _routeLegTracks = const [];
+
+  AiPoiDetailResult? _activePoiDetail;
+  bool _isPoiDetailLoading = false;
+  int _poiDetailToken = 0;
+
+  double get _currentZoom => _mapController.camera.zoom;
 
   @override
   void initState() {
@@ -168,6 +178,8 @@ class _MapScreenState extends State<MapScreen> {
     setState(() {
       _isSelecting = !_isSelecting;
       _activePoi = null;
+      _activePoiDetail = null;
+      _isPoiDetailLoading = false;
       _showPlanPanel = false;
       if (!_isSelecting) {
         _selectedPoiIds.clear();
@@ -187,7 +199,35 @@ class _MapScreenState extends State<MapScreen> {
       return;
     }
 
-    setState(() => _activePoi = poi);
+    final token = ++_poiDetailToken;
+    setState(() {
+      _activePoi = poi;
+      _activePoiDetail = null;
+      _isPoiDetailLoading = true;
+    });
+    unawaited(_loadPoiDetailWithAI(poi, token));
+  }
+
+  Future<void> _loadPoiDetailWithAI(Poi poi, int token) async {
+    try {
+      final detail = await _aiService.describePoiWithAI(
+        poi: poi,
+        preference: _travelPreference,
+      );
+      if (!mounted) return;
+      if (token != _poiDetailToken) return;
+      setState(() {
+        _activePoiDetail = detail;
+        _isPoiDetailLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      if (token != _poiDetailToken) return;
+      setState(() {
+        _activePoiDetail = null;
+        _isPoiDetailLoading = false;
+      });
+    }
   }
 
   void _openPlanPanel() {
@@ -249,9 +289,33 @@ class _MapScreenState extends State<MapScreen> {
         );
       }
 
+      // Fetch road-aligned tracks for each leg.
+      final legs = result.legs;
+      final tracks = <List<LatLng>>[];
+      for (var i = 0; i < legs.length; i++) {
+        final leg = legs[i];
+        // Avoid too many API calls; MVP keeps it reasonable.
+        if (i >= 6) break;
+        try {
+          final track = await _amapRouting.fetchLegTrack(
+            from: leg.from,
+            to: leg.to,
+            mode: leg.mode,
+          );
+          if (track.length >= 2) {
+            tracks.add(track);
+          } else {
+            tracks.add([leg.from, leg.to]);
+          }
+        } catch (_) {
+          tracks.add([leg.from, leg.to]);
+        }
+      }
+
       if (!mounted) return;
       setState(() {
         _routeResult = result;
+        _routeLegTracks = tracks;
         _isSelecting = false;
         _selectedPoiIds.clear();
         _showPlanPanel = false;
@@ -269,6 +333,7 @@ class _MapScreenState extends State<MapScreen> {
       );
       setState(() {
         _routeResult = result;
+        _routeLegTracks = const [];
         _isSelecting = false;
         _selectedPoiIds.clear();
         _showPlanPanel = false;
@@ -427,15 +492,78 @@ class _MapScreenState extends State<MapScreen> {
               right: 12,
               bottom: 16,
               child: GlassCard(
+                padding: const EdgeInsets.all(14),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    SizedBox(
+                      height: 92,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          Container(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(12),
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFF2A7FFF), Color(0xFF7A5CFF)],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            left: 12,
+                            top: 12,
+                            child: Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.22),
+                                border: Border.all(color: Colors.white.withOpacity(0.16)),
+                                shape: BoxShape.circle,
+                              ),
+                              child: _categoryIcon(_activePoi!.category),
+                            ),
+                          ),
+                          Positioned(
+                            right: 12,
+                            top: 12,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.22),
+                                borderRadius: BorderRadius.circular(999),
+                                border: Border.all(color: Colors.white.withOpacity(0.16)),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.star, size: 14, color: Colors.amber),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    _activePoi!.rating.toStringAsFixed(1),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
                     Row(
                       children: [
                         Expanded(
                           child: Text(
-                            _activePoi!.name,
+                            (_activePoiDetail?.title ?? _activePoi!.name),
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 16,
@@ -446,36 +574,118 @@ class _MapScreenState extends State<MapScreen> {
                           ),
                         ),
                         IconButton(
-                          onPressed: () => setState(() => _activePoi = null),
+                          onPressed: () => setState(() {
+                            _activePoi = null;
+                            _activePoiDetail = null;
+                            _isPoiDetailLoading = false;
+                          }),
                           icon: const Icon(Icons.close, color: Colors.white, size: 20),
                           padding: EdgeInsets.zero,
                           constraints: const BoxConstraints(),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        const Icon(Icons.star, size: 16, color: Colors.amber),
-                        const SizedBox(width: 6),
-                        Text(
-                          _activePoi!.rating.toStringAsFixed(1) + ' / 5.0',
-                          style: const TextStyle(color: Colors.white70),
-                        ),
-                        const SizedBox(width: 12),
-                        Text(
-                          _activePoi!.category.name,
-                          style: const TextStyle(color: Colors.white70),
-                        ),
-                      ],
-                    ),
                     const SizedBox(height: 10),
-                    Text(
-                      _activePoi!.description,
-                      style: const TextStyle(color: Colors.white70, fontSize: 13),
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+
+                    if (_isPoiDetailLoading)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Row(
+                          children: [
+                            const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                            const SizedBox(width: 10),
+                            const Text(
+                              'AI 生成介绍中...',
+                              style: TextStyle(color: Colors.white70, fontSize: 13),
+                            ),
+                          ],
+                        ),
+                      )
+                    else ...[
+                      Text(
+                        _activePoiDetail?.overview ??
+                            _activePoi!.description,
+                        style: const TextStyle(color: Colors.white70, fontSize: 13),
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if ((_activePoiDetail?.highlights.isNotEmpty ?? false))
+                        Padding(
+                          padding: const EdgeInsets.only(top: 10),
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: _activePoiDetail!.highlights
+                                .take(5)
+                                .map(
+                                  (h) => Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 6,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withOpacity(0.12),
+                                      borderRadius: BorderRadius.circular(999),
+                                      border: Border.all(color: Colors.white.withOpacity(0.16)),
+                                    ),
+                                    child: Text(
+                                      h,
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                        ),
+                      if ((_activePoiDetail?.tips.isNotEmpty ?? false))
+                        Padding(
+                          padding: const EdgeInsets.only(top: 10),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                '小贴士',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              for (final tip in _activePoiDetail!.tips.take(3))
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 3),
+                                  child: Row(
+                                    children: [
+                                      const Icon(Icons.check_circle, size: 14, color: Colors.lightGreenAccent),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          tip,
+                                          style: const TextStyle(
+                                            color: Colors.white70,
+                                            fontSize: 12,
+                                            height: 1.25,
+                                          ),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                    ],
                   ],
                 ),
               ),
@@ -570,6 +780,7 @@ class _MapScreenState extends State<MapScreen> {
     return _pois.map((poi) {
       final isSelected = _selectedPoiIds.contains(poi.id);
       final icon = _categoryIcon(poi.category);
+      final categoryColor = _categoryColor(poi.category);
       return Marker(
         point: poi.location,
         width: 46,
@@ -580,9 +791,9 @@ class _MapScreenState extends State<MapScreen> {
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: isSelected ? Colors.deepOrange.withOpacity(0.95) : Colors.white.withOpacity(0.12),
+              color: isSelected ? Colors.deepOrange.withOpacity(0.95) : categoryColor.withOpacity(0.18),
               border: Border.all(
-                color: isSelected ? Colors.white.withOpacity(0.9) : Colors.white.withOpacity(0.2),
+                color: isSelected ? Colors.white.withOpacity(0.9) : categoryColor.withOpacity(0.3),
                 width: 1.2,
               ),
               boxShadow: const [
@@ -621,8 +832,8 @@ class _MapScreenState extends State<MapScreen> {
                   child: Container(
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: Colors.black.withOpacity(0.25),
-                      border: Border.all(color: Colors.white.withOpacity(0.14), width: 1),
+                      color: Colors.black.withOpacity(0.22),
+                      border: Border.all(color: Colors.white.withOpacity(0.16), width: 1),
                     ),
                     padding: const EdgeInsets.all(4),
                     child: icon,
@@ -650,6 +861,17 @@ class _MapScreenState extends State<MapScreen> {
         break;
     }
     return Icon(iconData, color: Colors.white, size: 12);
+  }
+
+  Color _categoryColor(TravelPreference category) {
+    switch (category) {
+      case TravelPreference.food:
+        return const Color(0xFFFF8A65);
+      case TravelPreference.culture:
+        return const Color(0xFF7C4DFF);
+      case TravelPreference.nature:
+        return const Color(0xFF4DD0E1);
+    }
   }
 
   List<Marker> _buildRouteStopMarkers() {
@@ -797,6 +1019,7 @@ extension _RoutePolylineColor on _MapScreenState {
   List<Polyline> _buildRoutePolylines() {
     final result = _routeResult;
     if (result == null) return const [];
+
     final legs = result.legs;
     if (legs.isEmpty) {
       return [
@@ -808,14 +1031,25 @@ extension _RoutePolylineColor on _MapScreenState {
       ];
     }
 
-    return legs.map((leg) {
-      final color = _modeColor(leg.mode);
-      return Polyline(
-        points: [leg.from, leg.to],
-        strokeWidth: 5,
-        color: color.withOpacity(0.95),
-      );
-    }).toList();
+    if (_routeLegTracks.isNotEmpty && _routeLegTracks.length == legs.length) {
+      return [
+        for (var i = 0; i < legs.length; i++)
+          Polyline(
+            points: _routeLegTracks[i],
+            strokeWidth: 5,
+            color: _modeColor(legs[i].mode).withOpacity(0.95),
+          ),
+      ];
+    }
+
+    // Fallback: straight segments (should be replaced once AMap track returns).
+    return legs
+        .map((leg) => Polyline(
+              points: [leg.from, leg.to],
+              strokeWidth: 5,
+              color: _modeColor(leg.mode).withOpacity(0.95),
+            ))
+        .toList();
   }
 
   Color _modeColor(TravelMode mode) {
