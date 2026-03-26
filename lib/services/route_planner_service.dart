@@ -2,21 +2,49 @@ import 'package:latlong2/latlong.dart';
 
 import '../models/poi.dart';
 
+enum TravelMode {
+  walk,
+  bike,
+  transit,
+  drive,
+}
+
+class RouteLeg {
+  const RouteLeg({
+    required this.from,
+    required this.to,
+    required this.mode,
+    required this.distanceMeters,
+    required this.estimatedMinutes,
+  });
+
+  final LatLng from;
+  final LatLng to;
+  final TravelMode mode;
+  final int distanceMeters;
+  final int estimatedMinutes;
+}
+
 class RoutePlanResult {
   const RoutePlanResult({
     required this.orderedPois,
     required this.polyline,
+    required this.legs,
     required this.estimatedMinutes,
   });
 
   final List<Poi> orderedPois;
   final List<LatLng> polyline;
+  final List<RouteLeg> legs;
   final int estimatedMinutes;
 }
 
 class RoutePlannerService {
   static const _distance = Distance();
   static const _walkingSpeedKmPerHour = 4.2;
+  static const _bikeSpeedKmPerHour = 13.0;
+  static const _transitSpeedKmPerHour = 22.0;
+  static const _driveSpeedKmPerHour = 35.0;
 
   RoutePlanResult plan({
     required LatLng start,
@@ -25,7 +53,7 @@ class RoutePlannerService {
     required TravelPreference preference,
   }) {
     if (selectedPois.isEmpty) {
-      return const RoutePlanResult(orderedPois: [], polyline: [], estimatedMinutes: 0);
+      return const RoutePlanResult(orderedPois: [], polyline: [], legs: [], estimatedMinutes: 0);
     }
 
     final preferred = selectedPois.where((p) => p.category == preference).toList();
@@ -39,7 +67,8 @@ class RoutePlannerService {
     var totalMinutes = 0;
 
     for (final poi in optimized) {
-      final legMinutes = _estimateMinutes(current, poi.location);
+      final leg = _estimateLeg(current, poi.location);
+      final legMinutes = leg.estimatedMinutes;
       if (totalMinutes + legMinutes > timeLimitMinutes) {
         break;
       }
@@ -48,9 +77,16 @@ class RoutePlannerService {
       current = poi.location;
     }
 
+    final polyline = [start, ...limited.map((e) => e.location)];
+    final legs = <RouteLeg>[];
+    for (var i = 0; i < polyline.length - 1; i++) {
+      legs.add(_estimateLeg(polyline[i], polyline[i + 1]));
+    }
+
     return RoutePlanResult(
       orderedPois: limited,
-      polyline: [start, ...limited.map((e) => e.location)],
+      polyline: polyline,
+      legs: legs,
       estimatedMinutes: totalMinutes,
     );
   }
@@ -77,10 +113,29 @@ class RoutePlannerService {
     return result;
   }
 
-  int _estimateMinutes(LatLng from, LatLng to) {
-    final meters = _distance.as(LengthUnit.Meter, from, to);
-    final km = meters / 1000;
-    final hours = km / _walkingSpeedKmPerHour;
-    return (hours * 60).ceil();
+  RouteLeg _estimateLeg(LatLng from, LatLng to) {
+    final meters = _distance.as(LengthUnit.Meter, from, to).round();
+    final mode = _chooseMode(meters);
+    final speed = switch (mode) {
+      TravelMode.walk => _walkingSpeedKmPerHour,
+      TravelMode.bike => _bikeSpeedKmPerHour,
+      TravelMode.transit => _transitSpeedKmPerHour,
+      TravelMode.drive => _driveSpeedKmPerHour,
+    };
+    final minutes = ((meters / 1000) / speed * 60).ceil().clamp(1, 9999);
+    return RouteLeg(
+      from: from,
+      to: to,
+      mode: mode,
+      distanceMeters: meters,
+      estimatedMinutes: minutes,
+    );
+  }
+
+  TravelMode _chooseMode(int meters) {
+    if (meters <= 1500) return TravelMode.walk;
+    if (meters <= 5000) return TravelMode.bike;
+    if (meters <= 20000) return TravelMode.transit;
+    return TravelMode.drive;
   }
 }

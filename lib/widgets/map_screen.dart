@@ -24,6 +24,7 @@ class _MapScreenState extends State<MapScreen> {
   final _mapController = MapController();
   final _poiService = PoiService();
   final _routePlanner = RoutePlannerService();
+  Timer? _poiRefreshDebounce;
 
   LatLng? _currentLocation;
   List<Poi> _pois = const [];
@@ -58,6 +59,8 @@ class _MapScreenState extends State<MapScreen> {
         _isLoadingLocation = false;
         _locationError = null;
       });
+      // After the first map frame, refresh POIs from visible bounds.
+      unawaited(_refreshPoisFromViewport());
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -65,6 +68,22 @@ class _MapScreenState extends State<MapScreen> {
         _locationError = e.toString();
       });
     }
+  }
+
+  Future<void> _refreshPoisFromViewport() async {
+    if (!mounted) return;
+    if (_isSelecting) return; // avoid UI churn while selecting
+    final bounds = _mapController.camera.visibleBounds;
+    final updated = _poiService.getRecommendationsForBounds(bounds: bounds, maxCount: 18);
+    setState(() {
+      _pois = updated;
+    });
+  }
+
+  @override
+  void dispose() {
+    _poiRefreshDebounce?.cancel();
+    super.dispose();
   }
 
   Future<Position> _determinePosition() async {
@@ -217,16 +236,20 @@ class _MapScreenState extends State<MapScreen> {
               initialCenter: current,
               initialZoom: 14,
               interactionOptions: const InteractionOptions(flags: InteractiveFlag.all),
+              onPositionChanged: (pos, hasGesture) {
+                if (!hasGesture) return;
+                _poiRefreshDebounce?.cancel();
+                _poiRefreshDebounce = Timer(const Duration(milliseconds: 450), () {
+                  unawaited(_refreshPoisFromViewport());
+                });
+              },
             ),
             children: [
               TileLayer(
-                urlTemplate: (() {
-                  const amapKey = String.fromEnvironment('AMAP_API_KEY', defaultValue: '');
-                  if (amapKey.isEmpty) {
-                    return 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-                  }
-                  return MapTiles.amapTileUrlTemplate(apiKey: amapKey);
-                })(),
+                // Always use AMap tiles (requirement). Provide AMAP_API_KEY via env if needed.
+                urlTemplate: MapTiles.amapTileUrlTemplate(
+                  apiKey: const String.fromEnvironment('AMAP_API_KEY', defaultValue: ''),
+                ),
                 userAgentPackageName: 'com.example.travel_map_app',
               ),
               MarkerLayer(markers: _buildPoiMarkers()),
@@ -272,6 +295,7 @@ class _MapScreenState extends State<MapScreen> {
               routeMinutes: _routeResult?.estimatedMinutes,
               routeStops: _routeResult?.orderedPois.length,
               selectedCount: _selectedPoiIds.length,
+              legs: _routeResult?.legs,
             ),
           ),
           Positioned(
@@ -578,12 +602,14 @@ class _TopGlassInfo extends StatelessWidget {
     required this.routeMinutes,
     required this.routeStops,
     required this.selectedCount,
+    required this.legs,
   });
 
   final bool isSelecting;
   final int? routeMinutes;
   final int? routeStops;
   final int selectedCount;
+  final List<RouteLeg>? legs;
 
   @override
   Widget build(BuildContext context) {
@@ -612,8 +638,65 @@ class _TopGlassInfo extends StatelessWidget {
               textAlign: TextAlign.center,
             ),
           ),
+          if (!isSelecting && (legs?.isNotEmpty ?? false)) ...[
+            const SizedBox(width: 10),
+            _ModePills(legs: legs!),
+          ],
         ],
       ),
     );
+  }
+}
+
+class _ModePills extends StatelessWidget {
+  const _ModePills({required this.legs});
+
+  final List<RouteLeg> legs;
+
+  @override
+  Widget build(BuildContext context) {
+    // Show up to 3 legs to keep the bar minimal.
+    final show = legs.take(3).toList();
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final leg in show)
+          Padding(
+            padding: const EdgeInsets.only(left: 6),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.14),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: Colors.white.withOpacity(0.22), width: 1),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(_iconFor(leg.mode), size: 14, color: Colors.white),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${leg.estimatedMinutes}m',
+                    style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w700),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  static IconData _iconFor(TravelMode mode) {
+    switch (mode) {
+      case TravelMode.walk:
+        return Icons.directions_walk;
+      case TravelMode.bike:
+        return Icons.directions_bike;
+      case TravelMode.transit:
+        return Icons.directions_transit;
+      case TravelMode.drive:
+        return Icons.directions_car;
+    }
   }
 }
