@@ -11,6 +11,7 @@ import '../models/poi.dart';
 import '../services/map_tiles.dart';
 import '../services/poi_service.dart';
 import '../services/route_planner_service.dart';
+import '../services/ai_service.dart';
 import 'glass.dart';
 
 class MapScreen extends StatefulWidget {
@@ -25,6 +26,7 @@ class _MapScreenState extends State<MapScreen> {
   final _poiService = PoiService();
   final _routePlanner = RoutePlannerService();
   Timer? _poiRefreshDebounce;
+  final _aiService = AiService();
 
   LatLng? _currentLocation;
   List<Poi> _pois = const [];
@@ -39,6 +41,10 @@ class _MapScreenState extends State<MapScreen> {
   bool _showPlanPanel = false;
   double _timeLimitMinutes = 180;
   TravelPreference _travelPreference = TravelPreference.food;
+
+  bool _isAiReranking = false;
+  int _aiRerankToken = 0;
+  bool _isAiPlanning = false;
 
   @override
   void initState() {
@@ -74,10 +80,49 @@ class _MapScreenState extends State<MapScreen> {
     if (!mounted) return;
     if (_isSelecting) return; // avoid UI churn while selecting
     final bounds = _mapController.camera.visibleBounds;
-    final updated = _poiService.getRecommendationsForBounds(bounds: bounds, maxCount: 18);
+    final candidates =
+        _poiService.getRecommendationsForBounds(bounds: bounds, maxCount: 18);
+
+    // Update immediately with local candidates; AI will rerank if enabled.
     setState(() {
-      _pois = updated;
+      _pois = candidates;
     });
+
+    if (_currentLocation == null) return;
+    if (_isAiReranking) return;
+    final userLocation = _currentLocation!;
+
+    // Throttle AI calls a bit.
+    final token = ++_aiRerankToken;
+    _isAiReranking = true;
+    try {
+      final aiResult = await _aiService.rerankPois(
+        candidates: candidates,
+        preference: _travelPreference,
+        userLocation: userLocation,
+        topK: candidates.length,
+      );
+      if (!mounted) return;
+      if (token != _aiRerankToken) return; // out-of-date response
+      if (aiResult == null) return;
+
+      final idSet = {for (final id in aiResult.topPoiIds) id};
+      final ordered = <Poi>[];
+      for (final id in aiResult.topPoiIds) {
+        final poi = candidates.where((p) => p.id == id).toList();
+        if (poi.isNotEmpty) ordered.add(poi.first);
+      }
+      // Fill any missing candidates at the end.
+      for (final c in candidates) {
+        if (!idSet.contains(c.id)) ordered.add(c);
+      }
+
+      setState(() {
+        _pois = ordered.take(18).toList();
+      });
+    } finally {
+      _isAiReranking = false;
+    }
   }
 
   @override
@@ -163,21 +208,74 @@ class _MapScreenState extends State<MapScreen> {
   void _generateRoute() {
     if (_currentLocation == null) return;
     if (_selectedPoiIds.isEmpty) return;
+    if (_isAiPlanning) return;
 
-    final selected = _pois.where((p) => _selectedPoiIds.contains(p.id)).toList();
-    final result = _routePlanner.plan(
-      start: _currentLocation!,
-      selectedPois: selected,
-      timeLimitMinutes: _timeLimitMinutes.toInt(),
-      preference: _travelPreference,
-    );
+    unawaited(_generateRouteAsync());
+  }
 
-    setState(() {
-      _routeResult = result;
-      _isSelecting = false;
-      _selectedPoiIds.clear();
-      _showPlanPanel = false;
-    });
+  Future<void> _generateRouteAsync() async {
+    setState(() => _isAiPlanning = true);
+    try {
+      final start = _currentLocation!;
+      final selected = _pois.where((p) => _selectedPoiIds.contains(p.id)).toList();
+
+      // Try AI first; if it is disabled or fails, fallback to local optimizer.
+      final aiPlan = await _aiService.planRouteWithAI(
+        start: start,
+        selectedPois: selected,
+        timeLimitMinutes: _timeLimitMinutes.toInt(),
+        preference: _travelPreference,
+      );
+
+      RoutePlanResult result;
+      if (aiPlan != null && aiPlan.orderedPoiIds.isNotEmpty) {
+        final byId = {for (final p in selected) p.id: p};
+        final orderedPois = aiPlan.orderedPoiIds
+            .map((id) => byId[id])
+            .whereType<Poi>()
+            .toList();
+        result = _routePlanner.planFromOrderAndModes(
+          start: start,
+          orderedPois: orderedPois,
+          modes: aiPlan.modes,
+          timeLimitMinutes: _timeLimitMinutes.toInt(),
+        );
+      } else {
+        result = _routePlanner.plan(
+          start: start,
+          selectedPois: selected,
+          timeLimitMinutes: _timeLimitMinutes.toInt(),
+          preference: _travelPreference,
+        );
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _routeResult = result;
+        _isSelecting = false;
+        _selectedPoiIds.clear();
+        _showPlanPanel = false;
+      });
+    } catch (_) {
+      // If AI fails, still fallback to local plan.
+      if (!mounted) return;
+      final start = _currentLocation!;
+      final selected = _pois.where((p) => _selectedPoiIds.contains(p.id)).toList();
+      final result = _routePlanner.plan(
+        start: start,
+        selectedPois: selected,
+        timeLimitMinutes: _timeLimitMinutes.toInt(),
+        preference: _travelPreference,
+      );
+      setState(() {
+        _routeResult = result;
+        _isSelecting = false;
+        _selectedPoiIds.clear();
+        _showPlanPanel = false;
+      });
+    } finally {
+      if (mounted) setState(() => _isAiPlanning = false);
+    }
   }
 
   @override

@@ -138,4 +138,64 @@ class RoutePlannerService {
     if (meters <= 20000) return TravelMode.transit;
     return TravelMode.drive;
   }
+
+  /// Estimate leg with a fixed transport mode (used by AI suggestions).
+  RouteLeg _estimateLegWithMode(LatLng from, LatLng to, TravelMode mode) {
+    final meters = _distance.as(LengthUnit.Meter, from, to).round();
+    final speed = switch (mode) {
+      TravelMode.walk => _walkingSpeedKmPerHour,
+      TravelMode.bike => _bikeSpeedKmPerHour,
+      TravelMode.transit => _transitSpeedKmPerHour,
+      TravelMode.drive => _driveSpeedKmPerHour,
+    };
+    final minutes = ((meters / 1000) / speed * 60).ceil().clamp(1, 9999);
+    return RouteLeg(
+      from: from,
+      to: to,
+      mode: mode,
+      distanceMeters: meters,
+      estimatedMinutes: minutes,
+    );
+  }
+
+  /// Build a route result from an AI-provided order and per-leg modes.
+  RoutePlanResult planFromOrderAndModes({
+    required LatLng start,
+    required List<Poi> orderedPois,
+    required List<TravelMode> modes,
+    required int timeLimitMinutes,
+  }) {
+    if (orderedPois.isEmpty) {
+      return const RoutePlanResult(orderedPois: [], polyline: [], legs: [], estimatedMinutes: 0);
+    }
+
+    final keptPois = <Poi>[];
+    final legs = <RouteLeg>[];
+    var totalMinutes = 0;
+    var current = start;
+
+    for (var i = 0; i < orderedPois.length; i++) {
+      final poi = orderedPois[i];
+      final mode = i < modes.length
+          ? modes[i]
+          : _chooseMode(_distance.as(LengthUnit.Meter, current, poi.location).round());
+      final leg = _estimateLegWithMode(current, poi.location, mode);
+
+      if (totalMinutes + leg.estimatedMinutes > timeLimitMinutes) {
+        break;
+      }
+      legs.add(leg);
+      keptPois.add(poi);
+      totalMinutes += leg.estimatedMinutes;
+      current = poi.location;
+    }
+
+    final polyline = [start, ...keptPois.map((e) => e.location)];
+    return RoutePlanResult(
+      orderedPois: keptPois,
+      polyline: polyline,
+      legs: legs,
+      estimatedMinutes: totalMinutes,
+    );
+  }
 }

@@ -72,7 +72,7 @@ jobs:
 
       - name: Build web
         working-directory: ${{ env.APP_DIR }}
-        run: flutter build web --release --base-href=/travel_map_app/ --dart-define=AMAP_API_KEY=${{ secrets.AMAP_API_KEY }}
+        run: flutter build web --release --base-href=/travel_map_app/ --dart-define=AMAP_API_KEY=${{ secrets.AMAP_API_KEY }} --dart-define=DOUBAO_API_KEY=${{ secrets.DOUBAO_API_KEY }} --dart-define=DOUBAO_API_BASE_URL=${{ secrets.DOUBAO_API_BASE_URL }} --dart-define=DOUBAO_MODEL=${{ secrets.DOUBAO_MODEL }}
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
