@@ -1,5 +1,6 @@
 import 'dart:math';
 
+import 'package:flutter_map/flutter_map.dart' show LatLngBounds;
 import 'package:latlong2/latlong.dart';
 
 import '../models/poi.dart';
