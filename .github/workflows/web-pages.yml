@@ -72,7 +72,7 @@ jobs:
 
       - name: Build web
         working-directory: ${{ env.APP_DIR }}
-        run: flutter build web --release
+        run: flutter build web --release --base-href=/travel_map_app/
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
