@@ -23,12 +23,18 @@ class AiRoutePlanResult {
 class AiService {
   AiService()
       : _apiKey = const String.fromEnvironment('DOUBAO_API_KEY', defaultValue: ''),
-        _baseUrl = const String.fromEnvironment('DOUBAO_API_BASE_URL', defaultValue: ''),
-        _model = const String.fromEnvironment('DOUBAO_MODEL', defaultValue: 'doubao-pro');
+        _baseUrl = const String.fromEnvironment('DOUBAO_API_BASE_URL', defaultValue: '') {
+    _model = const String.fromEnvironment('DOUBAO_MODEL', defaultValue: 'doubao-pro');
+    if (_model.trim().isEmpty) {
+      // If user didn't provide DOUBAO_MODEL secret, fall back to a sane default.
+      // (If Dart defines it as empty string, the default won't apply.)
+      _model = 'doubao-pro';
+    }
+  }
 
   final String _apiKey;
   final String _baseUrl;
-  final String _model;
+  late String _model;
 
   bool get _enabled => _apiKey.isNotEmpty && _baseUrl.isNotEmpty;
 
@@ -83,13 +89,7 @@ class AiService {
       'temperature': 0.2
     };
 
-    final raw = await _postJson(
-      // openai-compatible style by default; if your API differs,
-      // tell me your endpoint and I will adjust.
-      path: _endsWithSlash(_baseUrl) ? '${_baseUrl}v1/chat/completions' : '$_baseUrl/v1/chat/completions',
-      payload: payload,
-      timeout: timeout,
-    );
+    final raw = await _postJson(payload: payload, timeout: timeout);
     final json = _extractJson(raw);
     if (json == null) return null;
 
@@ -152,11 +152,7 @@ class AiService {
       'temperature': 0.2
     };
 
-    final raw = await _postJson(
-      path: _endsWithSlash(_baseUrl) ? '${_baseUrl}v1/chat/completions' : '$_baseUrl/v1/chat/completions',
-      payload: payload,
-      timeout: timeout,
-    );
+    final raw = await _postJson(payload: payload, timeout: timeout);
 
     final json = _extractJson(raw);
     if (json == null) return null;
@@ -174,26 +170,57 @@ class AiService {
   }
 
   Future<String> _postJson({
-    required String path,
     required Map<String, dynamic> payload,
     required Duration timeout,
   }) async {
-    final uri = Uri.parse(path);
+    final base = _normalizeBaseUrl(_baseUrl);
+    final endpointAttempts = <String>[
+      '$base/v1/chat/completions',
+      '$base/chat/completions',
+    ];
+
     final headers = <String, String>{
       'Content-Type': 'application/json',
       if (_apiKey.isNotEmpty) 'Authorization': 'Bearer $_apiKey',
     };
 
-    final resp = await http
-        .post(uri, headers: headers, body: jsonEncode(payload))
-        .timeout(timeout);
-    if (resp.statusCode < 200 || resp.statusCode >= 300) {
-      throw Exception('AI request failed: ${resp.statusCode} ${resp.body}');
+    Object? lastError;
+    for (final url in endpointAttempts) {
+      try {
+        final resp = await http
+            .post(
+              Uri.parse(url),
+              headers: headers,
+              body: jsonEncode(payload),
+            )
+            .timeout(timeout);
+
+        if (resp.statusCode >= 200 && resp.statusCode < 300) {
+          return resp.body;
+        }
+
+        // If not found, try the next endpoint format.
+        if (resp.statusCode == 404) {
+          lastError = Exception('404 on $url');
+          continue;
+        }
+
+        throw Exception('AI request failed: ${resp.statusCode} ${resp.body}');
+      } catch (e) {
+        lastError = e;
+      }
     }
-    return resp.body;
+
+    throw Exception('AI request failed on all endpoint attempts. Last error: $lastError');
   }
 
-  static bool _endsWithSlash(String s) => s.endsWith('/');
+  static String _normalizeBaseUrl(String baseUrl) {
+    var s = baseUrl.trim();
+    if (s.endsWith('/')) s = s.substring(0, s.length - 1);
+    // If base url already ends with /v1, strip it to avoid /v1/v1
+    s = s.replaceFirst(RegExp(r'/v1$'), '');
+    return s;
+  }
 
   /// Try to parse the JSON from raw OpenAI-like response.
   ///

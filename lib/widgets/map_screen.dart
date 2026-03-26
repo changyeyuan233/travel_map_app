@@ -374,13 +374,7 @@ class _MapScreenState extends State<MapScreen> {
               ),
               if ((_routeResult?.polyline.length ?? 0) > 1)
                 PolylineLayer(
-                  polylines: [
-                    Polyline(
-                      points: _routeResult!.polyline,
-                      strokeWidth: 4.5,
-                      color: Colors.deepOrange.withOpacity(0.92),
-                    ),
-                  ],
+                  polylines: _buildRoutePolylines(),
                 ),
             ],
           ),
@@ -795,6 +789,45 @@ class _ModePills extends StatelessWidget {
         return Icons.directions_transit;
       case TravelMode.drive:
         return Icons.directions_car;
+    }
+  }
+}
+
+extension _RoutePolylineColor on _MapScreenState {
+  List<Polyline> _buildRoutePolylines() {
+    final result = _routeResult;
+    if (result == null) return const [];
+    final legs = result.legs;
+    if (legs.isEmpty) {
+      return [
+        Polyline(
+          points: result.polyline,
+          strokeWidth: 4.5,
+          color: Colors.deepOrange.withOpacity(0.92),
+        ),
+      ];
+    }
+
+    return legs.map((leg) {
+      final color = _modeColor(leg.mode);
+      return Polyline(
+        points: [leg.from, leg.to],
+        strokeWidth: 5,
+        color: color.withOpacity(0.95),
+      );
+    }).toList();
+  }
+
+  Color _modeColor(TravelMode mode) {
+    switch (mode) {
+      case TravelMode.walk:
+        return Colors.lightBlueAccent;
+      case TravelMode.bike:
+        return Colors.greenAccent;
+      case TravelMode.transit:
+        return Colors.purpleAccent;
+      case TravelMode.drive:
+        return Colors.deepOrangeAccent;
     }
   }
 }
