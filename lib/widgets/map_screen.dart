@@ -55,6 +55,7 @@ class _MapScreenState extends State<MapScreen> {
   int _poiDetailToken = 0;
 
   double get _currentZoom => _mapController.camera.zoom;
+  double _uiZoom = 14;
 
   @override
   void initState() {
@@ -390,6 +391,7 @@ class _MapScreenState extends State<MapScreen> {
       );
     }
 
+    final showPoiCards = _uiZoom <= 12.5 && !_isSelecting && _activePoi == null;
     return Scaffold(
       body: Stack(
         children: [
@@ -401,6 +403,9 @@ class _MapScreenState extends State<MapScreen> {
               interactionOptions: const InteractionOptions(flags: InteractiveFlag.all),
               onPositionChanged: (pos, hasGesture) {
                 if (!hasGesture) return;
+                if ((pos.zoom - _uiZoom).abs() > 0.2) {
+                  setState(() => _uiZoom = pos.zoom);
+                }
                 _poiRefreshDebounce?.cancel();
                 _poiRefreshDebounce = Timer(const Duration(milliseconds: 450), () {
                   unawaited(_refreshPoisFromViewport());
@@ -415,7 +420,7 @@ class _MapScreenState extends State<MapScreen> {
                 ),
                 userAgentPackageName: 'com.example.travel_map_app',
               ),
-              MarkerLayer(markers: _buildPoiMarkers()),
+              MarkerLayer(markers: showPoiCards ? const [] : _buildPoiMarkers()),
               if ((_routeResult?.orderedPois.length ?? 0) > 0)
                 MarkerLayer(markers: _buildRouteStopMarkers()),
               MarkerLayer(
@@ -444,53 +449,303 @@ class _MapScreenState extends State<MapScreen> {
             ],
           ),
           Positioned(
-            top: 48,
+            top: 12,
             left: 12,
             right: 12,
-            child: _TopGlassInfo(
-              isSelecting: _isSelecting,
-              routeMinutes: _routeResult?.estimatedMinutes,
-              routeStops: _routeResult?.orderedPois.length,
-              selectedCount: _selectedPoiIds.length,
-              legs: _routeResult?.legs,
+            child: Column(
+              children: [
+                GlassCard(
+                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+                  borderRadius: 18,
+                  opacity: 0.45,
+                  blurSigma: 22,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.location_on_outlined, size: 18, color: Colors.white),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '当前位置',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () {},
+                        icon: const Icon(Icons.search, color: Colors.white, size: 20),
+                        padding: EdgeInsets.zero,
+                      ),
+                      IconButton(
+                        onPressed: () {},
+                        icon: const Icon(Icons.person_outline, color: Colors.white, size: 20),
+                        padding: EdgeInsets.zero,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+                GlassCard(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  borderRadius: 18,
+                  opacity: 0.35,
+                  blurSigma: 20,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _prefChip(TravelPreference.food, Icons.restaurant, '美食'),
+                      _prefChip(TravelPreference.culture, Icons.theater_comedy, '景点'),
+                      _prefChip(TravelPreference.nature, Icons.park, '自然'),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+                GlassCard(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  borderRadius: 16,
+                  opacity: 0.35,
+                  blurSigma: 18,
+                  child: Row(
+                    children: [
+                      const Icon(Icons.layers, size: 16, color: Colors.white70),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _isSelecting
+                              ? '已选 ${_selectedPoiIds.length} 个'
+                              : (_routeResult != null && (_routeResult?.orderedPois.length ?? 0) > 0)
+                                  ? '已规划：${_routeResult!.orderedPois.length} 点 · 约 ${_routeResult!.estimatedMinutes} 分'
+                                  : '附近推荐',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 13,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
-          Positioned(
-            right: 16,
-            bottom: 160,
-            child: GlassIconButton(
-              onPressed: _centerOnUser,
-              icon: const Icon(Icons.gps_fixed, color: Colors.white, size: 18),
-            ),
-          ),
-          Positioned(
-            right: 16,
-            bottom: 96,
-            child: GlassPillButton(
-              onPressed: _toggleSelectionMode,
-              icon: Icon(
-                _isSelecting ? Icons.close : Icons.checklist,
-                size: 18,
-                color: Colors.white,
-              ),
-              child: Text(_isSelecting ? '取消选点' : '多选 POI'),
-            ),
-          ),
-          if (_isSelecting)
+          if (showPoiCards)
             Positioned(
-              right: 16,
-              bottom: 24,
-              child: GlassPillButton(
-                onPressed: _openPlanPanel,
-                icon: const Icon(Icons.route, size: 18, color: Colors.white),
-                child: Text('规划 (${_selectedPoiIds.length})'),
+              left: 12,
+              right: 12,
+              bottom: 110,
+              child: SizedBox(
+                height: 250,
+                child: ListView.separated(
+                  padding: EdgeInsets.zero,
+                  itemCount: _pois.take(6).length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                  itemBuilder: (ctx, i) {
+                    final poi = _pois[i];
+                    final selected = _selectedPoiIds.contains(poi.id);
+                    return InkWell(
+                      onTap: () => _onTapPoi(poi),
+                      borderRadius: BorderRadius.circular(18),
+                      child: GlassCard(
+                        padding: const EdgeInsets.all(12),
+                        borderRadius: 18,
+                        opacity: 0.45,
+                        blurSigma: 20,
+                        child: Stack(
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  width: 92,
+                                  height: 76,
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(14),
+                                    color: _categoryColor(poi.category).withOpacity(0.22),
+                                    border: Border.all(
+                                      color: _categoryColor(poi.category).withOpacity(0.35),
+                                      width: 1,
+                                    ),
+                                  ),
+                                  child: Center(
+                                    child: _categoryIcon(poi.category),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        poi.name,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w900,
+                                          fontSize: 15,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Row(
+                                        children: [
+                                          const Icon(Icons.star, size: 14, color: Colors.amber),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            poi.rating.toStringAsFixed(1),
+                                            style: const TextStyle(
+                                              color: Colors.white70,
+                                              fontWeight: FontWeight.w800,
+                                              fontSize: 13,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        poi.category.name,
+                                        style: TextStyle(
+                                          color: _categoryColor(poi.category).withOpacity(0.95),
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 12,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (selected)
+                              Positioned(
+                                right: 0,
+                                top: 0,
+                                child: Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.deepOrange.withOpacity(0.92),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: const Icon(Icons.check, size: 18, color: Colors.white),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ),
             ),
+          Positioned(
+            left: 14,
+            right: 14,
+            bottom: 20,
+            child: SafeArea(
+              top: false,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: InkWell(
+                      onTap: _toggleSelectionMode,
+                      borderRadius: BorderRadius.circular(18),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.card_travel,
+                            size: 22,
+                            color: _isSelecting ? Colors.white : Colors.white70,
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '行程',
+                            style: TextStyle(
+                              color: _isSelecting ? Colors.white : Colors.white70,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  InkWell(
+                    onTap: () {
+                      if (_isSelecting) {
+                        _openPlanPanel();
+                      } else {
+                        _centerOnUser();
+                      }
+                    },
+                    borderRadius: BorderRadius.circular(999),
+                    child: Container(
+                      width: 72,
+                      height: 72,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.86),
+                        borderRadius: BorderRadius.circular(999),
+                        boxShadow: const [
+                          BoxShadow(color: Colors.black26, blurRadius: 16, offset: Offset(0, 8)),
+                        ],
+                      ),
+                      child: const Center(
+                        child: Icon(Icons.add, color: Colors.white, size: 30),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: InkWell(
+                      onTap: () {
+                        if (_isSelecting) _toggleSelectionMode();
+                        setState(() {
+                          _showPlanPanel = false;
+                          _activePoi = null;
+                          _activePoiDetail = null;
+                          _isPoiDetailLoading = false;
+                        });
+                      },
+                      borderRadius: BorderRadius.circular(18),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.place,
+                            size: 22,
+                            color: !_isSelecting ? Colors.white : Colors.white70,
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '附近',
+                            style: TextStyle(
+                              color: !_isSelecting ? Colors.white : Colors.white70,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
           if (_activePoi != null && !_isSelecting)
             Positioned(
               left: 12,
               right: 12,
-              bottom: 16,
+              bottom: 110,
               child: GlassCard(
                 padding: const EdgeInsets.all(14),
                 child: Column(
@@ -694,7 +949,7 @@ class _MapScreenState extends State<MapScreen> {
             Positioned(
               left: 12,
               right: 12,
-              bottom: 16,
+              bottom: 110,
               child: GlassCard(
                 padding: const EdgeInsets.all(16),
                 child: Column(
@@ -872,6 +1127,44 @@ class _MapScreenState extends State<MapScreen> {
       case TravelPreference.nature:
         return const Color(0xFF4DD0E1);
     }
+  }
+
+  Widget _prefChip(TravelPreference pref, IconData icon, String label) {
+    final selected = _travelPreference == pref;
+    final c = _categoryColor(pref);
+    return GestureDetector(
+      onTap: () {
+        if (selected) return;
+        setState(() => _travelPreference = pref);
+        unawaited(_refreshPoisFromViewport());
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? c.withOpacity(0.18) : Colors.white.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: selected ? c.withOpacity(0.55) : Colors.white.withOpacity(0.12),
+            width: 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: selected ? Colors.white : c.withOpacity(0.95)),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: selected ? Colors.white : Colors.white70,
+                fontWeight: FontWeight.w800,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   List<Marker> _buildRouteStopMarkers() {
